@@ -9,7 +9,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-# Page setup
+# ----------------------
+# Page config
+# ----------------------
 st.set_page_config(
     page_title="AI-Powered Startup Financial System",
     page_icon="💰",
@@ -17,9 +19,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ========================
-# Database Setup
-# ========================
+# ----------------------
+# Database setup
+# ----------------------
 DB_PATH = "projects.db"
 
 def init_db():
@@ -76,17 +78,19 @@ def delete_project(name):
     conn.commit()
     conn.close()
 
-# ========================
+# ----------------------
 # Session State
-# ========================
+# ----------------------
 if "project_name" not in st.session_state:
     st.session_state.project_name = "New Project"
 if "data" not in st.session_state:
     st.session_state.data = {}
+if "rerun_flag" not in st.session_state:
+    st.session_state.rerun_flag = False
 
-# ========================
-# Sidebar
-# ========================
+# ----------------------
+# Sidebar - Project Management
+# ----------------------
 st.sidebar.markdown("## 🏢 Project Management")
 projects = load_all_projects()
 selected = st.sidebar.selectbox("Select Project", ["New Project"] + projects)
@@ -96,23 +100,28 @@ if selected == "New Project":
     if st.sidebar.button("Create Project"):
         st.session_state.project_name = new_name
         st.session_state.data = {}
-        st.experimental_rerun()
+        st.session_state.rerun_flag = True
 else:
     st.session_state.project_name = selected
     if st.sidebar.button("Load Project"):
         st.session_state.data = load_project(selected) or {}
         st.success(f"Loaded {selected}")
-        st.experimental_rerun()
+        st.session_state.rerun_flag = True
 
 if st.sidebar.button("Delete Project"):
     delete_project(st.session_state.project_name)
     st.session_state.data = {}
     st.success("Project deleted!")
+    st.session_state.rerun_flag = True
+
+# Rerun if flag set
+if st.session_state.rerun_flag:
+    st.session_state.rerun_flag = False
     st.experimental_rerun()
 
-# ========================
+# ----------------------
 # Default Financial Data
-# ========================
+# ----------------------
 data = st.session_state.data
 if not data:
     data = {
@@ -124,9 +133,9 @@ if not data:
         "expected_sales": 1000
     }
 
-# ========================
+# ----------------------
 # Input Form
-# ========================
+# ----------------------
 with st.expander("📊 Input Financial Data", expanded=True):
     col1, col2 = st.columns(2)
     with col1:
@@ -138,14 +147,14 @@ with st.expander("📊 Input Financial Data", expanded=True):
         data["profit_margin"] = st.number_input("Target Profit Margin (%)", value=data["profit_margin"]*100)/100
         data["expected_sales"] = st.number_input("Expected Monthly Sales", value=data["expected_sales"])
 
-# ========================
+# ----------------------
 # Auto Save
-# ========================
+# ----------------------
 save_project(st.session_state.project_name, data)
 
-# ========================
-# Metrics
-# ========================
+# ----------------------
+# Metrics Calculation
+# ----------------------
 def calculate_metrics(d):
     total_var = d["material_cost"] + d["packaging_cost"] + d["shipping_cost"]
     selling_price = total_var * (1 + d["profit_margin"])
@@ -166,9 +175,9 @@ def calculate_metrics(d):
 
 metrics = calculate_metrics(data)
 
-# ========================
+# ----------------------
 # KPI Dashboard
-# ========================
+# ----------------------
 st.markdown("### 📈 Financial KPIs")
 c1,c2,c3,c4 = st.columns(4)
 c1.metric("Selling Price", f"${metrics['selling_price']:.2f}")
@@ -176,9 +185,9 @@ c2.metric("Contribution Margin", f"${metrics['contribution_margin']:.2f}", f"{me
 c3.metric("Break-even Units", f"{metrics['break_even_units']:.0f}")
 c4.metric("Monthly Profit", f"${metrics['monthly_profit']:.0f}")
 
-# ========================
+# ----------------------
 # Charts
-# ========================
+# ----------------------
 prices = np.linspace(metrics["total_variable_cost"]*0.8, metrics["total_variable_cost"]*2, 100)
 profits = (prices - metrics["total_variable_cost"])*data["expected_sales"] - data["fixed_costs"]
 fig = px.line(x=prices, y=profits, labels={"x":"Selling Price","y":"Monthly Profit"}, title="Profit vs Price")
@@ -195,9 +204,9 @@ fig2.add_trace(go.Scatter(x=x_units,y=total_cost,name="Total Cost"),secondary_y=
 fig2.add_trace(go.Scatter(x=x_units,y=profit,name="Profit"),secondary_y=True)
 st.plotly_chart(fig2,use_container_width=True)
 
-# ========================
+# ----------------------
 # Scenario Modeling
-# ========================
+# ----------------------
 scenarios = {
     "Conservative":{"sales":data["expected_sales"]*0.7,"margin":data["profit_margin"]*0.9},
     "Expected":{"sales":data["expected_sales"],"margin":data["profit_margin"]},
