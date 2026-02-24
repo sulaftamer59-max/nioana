@@ -1,39 +1,41 @@
 # app.py
 import streamlit as st
-import sqlite3
 import pandas as pd
 import numpy as np
 import json
 from datetime import datetime
-import plotly.express as px
-import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import plotly.graph_objects as go
+import plotly.express as px
+import sqlite3
+import hashlib
 
 # ----------------------
 # Page config
 # ----------------------
 st.set_page_config(
-    page_title="AI-Powered Startup Financial System",
+    page_title="AI Startup Financial System",
     page_icon="💰",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
 # ----------------------
-# Database setup
+# Database Setup
 # ----------------------
-DB_PATH = "projects.db"
+DB_PATH = "multiuser_financials.db"
 
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS projects (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        project_name TEXT NOT NULL UNIQUE,
+        user_id TEXT NOT NULL,
+        project_name TEXT NOT NULL,
         data TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, project_name)
     )
     """)
     conn.commit()
@@ -41,58 +43,73 @@ def init_db():
 
 init_db()
 
-def save_project(name, data):
+# ----------------------
+# Helper Functions
+# ----------------------
+def get_user_id(username: str):
+    return hashlib.sha256(username.encode()).hexdigest()
+
+def save_project(user_id, project_name, data):
     data_json = json.dumps(data)
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM projects WHERE project_name = ?", (name,))
+    cursor.execute("SELECT id FROM projects WHERE user_id=? AND project_name=?", (user_id, project_name))
     if cursor.fetchone():
-        cursor.execute("UPDATE projects SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE project_name = ?", (data_json, name))
+        cursor.execute("UPDATE projects SET data=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND project_name=?", (data_json, user_id, project_name))
     else:
-        cursor.execute("INSERT INTO projects (project_name, data) VALUES (?, ?)", (name, data_json))
+        cursor.execute("INSERT INTO projects (user_id, project_name, data) VALUES (?, ?, ?)", (user_id, project_name, data_json))
     conn.commit()
     conn.close()
 
-def load_project(name):
-    conn = sqlite3.connect(DB_PATH)
+def load_project(user_id, project_name):
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute("SELECT data FROM projects WHERE project_name = ?", (name,))
+    cursor.execute("SELECT data FROM projects WHERE user_id=? AND project_name=?", (user_id, project_name))
     res = cursor.fetchone()
     conn.close()
     if res:
         return json.loads(res[0])
     return None
 
-def load_all_projects():
-    conn = sqlite3.connect(DB_PATH)
+def load_all_projects(user_id):
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute("SELECT project_name FROM projects ORDER BY updated_at DESC")
+    cursor.execute("SELECT project_name FROM projects WHERE user_id=? ORDER BY updated_at DESC", (user_id,))
     res = cursor.fetchall()
     conn.close()
     return [r[0] for r in res]
 
-def delete_project(name):
-    conn = sqlite3.connect(DB_PATH)
+def delete_project(user_id, project_name):
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM projects WHERE project_name = ?", (name,))
+    cursor.execute("DELETE FROM projects WHERE user_id=? AND project_name=?", (user_id, project_name))
     conn.commit()
     conn.close()
 
 # ----------------------
-# Session State
+# User Login
+# ----------------------
+st.sidebar.markdown("## 🔑 User Login / Sign-in")
+username = st.sidebar.text_input("Enter your username")
+if username:
+    user_id = get_user_id(username)
+else:
+    st.warning("Please enter a username to continue.")
+    st.stop()
+
+# ----------------------
+# Session State Initialization
 # ----------------------
 if "project_name" not in st.session_state:
     st.session_state.project_name = "New Project"
 if "data" not in st.session_state:
     st.session_state.data = {}
-if "rerun_flag" not in st.session_state:
-    st.session_state.rerun_flag = False
 
 # ----------------------
 # Sidebar - Project Management
 # ----------------------
 st.sidebar.markdown("## 🏢 Project Management")
-projects = load_all_projects()
+projects = load_all_projects(user_id)
 selected = st.sidebar.selectbox("Select Project", ["New Project"] + projects)
 
 if selected == "New Project":
@@ -100,23 +117,19 @@ if selected == "New Project":
     if st.sidebar.button("Create Project"):
         st.session_state.project_name = new_name
         st.session_state.data = {}
-        st.session_state.rerun_flag = True
+        save_project(user_id, new_name, st.session_state.data)
+        st.experimental_rerun()
 else:
     st.session_state.project_name = selected
     if st.sidebar.button("Load Project"):
-        st.session_state.data = load_project(selected) or {}
+        st.session_state.data = load_project(user_id, selected) or {}
         st.success(f"Loaded {selected}")
-        st.session_state.rerun_flag = True
+        st.experimental_rerun()
 
 if st.sidebar.button("Delete Project"):
-    delete_project(st.session_state.project_name)
+    delete_project(user_id, st.session_state.project_name)
     st.session_state.data = {}
     st.success("Project deleted!")
-    st.session_state.rerun_flag = True
-
-# Rerun if flag set
-if st.session_state.rerun_flag:
-    st.session_state.rerun_flag = False
     st.experimental_rerun()
 
 # ----------------------
@@ -148,9 +161,9 @@ with st.expander("📊 Input Financial Data", expanded=True):
         data["expected_sales"] = st.number_input("Expected Monthly Sales", value=data["expected_sales"])
 
 # ----------------------
-# Auto Save
+# Auto-save for multi-user
 # ----------------------
-save_project(st.session_state.project_name, data)
+save_project(user_id, st.session_state.project_name, data)
 
 # ----------------------
 # Metrics Calculation
@@ -178,7 +191,7 @@ metrics = calculate_metrics(data)
 # ----------------------
 # KPI Dashboard
 # ----------------------
-st.markdown("### 📈 Financial KPIs")
+st.markdown(f"### 💰 Dashboard for {username} / {st.session_state.project_name}")
 c1,c2,c3,c4 = st.columns(4)
 c1.metric("Selling Price", f"${metrics['selling_price']:.2f}")
 c2.metric("Contribution Margin", f"${metrics['contribution_margin']:.2f}", f"{metrics['contribution_margin_pct']:.1f}%")
