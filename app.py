@@ -1,6 +1,6 @@
 # app.py
-
 import streamlit as st
+import sqlite3
 import pandas as pd
 import numpy as np
 import json
@@ -8,11 +8,7 @@ from datetime import datetime
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from supabase import create_client
 
-# ========================
-# 1️⃣ Streamlit Config
-# ========================
 st.set_page_config(
     page_title="AI-Powered Startup Financial System",
     page_icon="💰",
@@ -21,108 +17,102 @@ st.set_page_config(
 )
 
 # ========================
-# 2️⃣ Supabase Setup
+# Database Setup
 # ========================
-SUPABASE_URL = "https://xyzcompany.supabase.co"
-SUPABASE_KEY = "public-anon-key"
+DB_PATH = "projects.db"
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS projects (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_name TEXT NOT NULL UNIQUE,
+        data TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+    conn.commit()
+    conn.close()
 
-# ========================
-# 3️⃣ Authentication
-# ========================
-st.sidebar.markdown("## 🔐 User Authentication")
-auth_option = st.sidebar.radio("Choose:", ["Login", "Sign Up"])
+init_db()
 
-if auth_option == "Sign Up":
-    email = st.sidebar.text_input("Email")
-    password = st.sidebar.text_input("Password", type="password")
-    if st.sidebar.button("Sign Up"):
-        user = supabase.auth.sign_up({"email": email, "password": password})
-        st.success("User signed up! Please log in.")
-        st.stop()
-
-else:  # Login
-    email = st.sidebar.text_input("Email")
-    password = st.sidebar.text_input("Password", type="password")
-    if st.sidebar.button("Login"):
-        try:
-            user = supabase.auth.sign_in_with_password({"email": email, "password": password})
-            if user.user:
-                st.session_state.user_id = user.user.id
-                st.success(f"Logged in as {email}")
-            else:
-                st.error("Login failed")
-                st.stop()
-        except Exception as e:
-            st.error(f"Login error: {e}")
-            st.stop()
-
-user_id = st.session_state.get("user_id", None)
-if not user_id:
-    st.stop()
-
-# ========================
-# 4️⃣ Database Functions
-# ========================
-def save_project(project_name, data):
+def save_project(name, data):
     data_json = json.dumps(data)
-    existing = supabase.table("projects").select("*").eq("user_id", user_id).eq("project_name", project_name).execute()
-    if existing.data:
-        supabase.table("projects").update({
-            "data": data_json,
-            "updated_at": datetime.now().isoformat()
-        }).eq("user_id", user_id).eq("project_name", project_name).execute()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM projects WHERE project_name = ?", (name,))
+    if cursor.fetchone():
+        cursor.execute("UPDATE projects SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE project_name = ?", (data_json, name))
     else:
-        supabase.table("projects").insert({
-            "user_id": user_id,
-            "project_name": project_name,
-            "data": data_json
-        }).execute()
+        cursor.execute("INSERT INTO projects (project_name, data) VALUES (?, ?)", (name, data_json))
+    conn.commit()
+    conn.close()
 
-def load_project(project_name):
-    res = supabase.table("projects").select("data").eq("user_id", user_id).eq("project_name", project_name).execute()
-    if res.data:
-        return json.loads(res.data[0]["data"])
+def load_project(name):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT data FROM projects WHERE project_name = ?", (name,))
+    res = cursor.fetchone()
+    conn.close()
+    if res:
+        return json.loads(res[0])
     return None
 
 def load_all_projects():
-    res = supabase.table("projects").select("project_name").eq("user_id", user_id).execute()
-    return [p["project_name"] for p in res.data]
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT project_name FROM projects ORDER BY updated_at DESC")
+    res = cursor.fetchall()
+    conn.close()
+    return [r[0] for r in res]
 
-def delete_project(project_name):
-    supabase.table("projects").delete().eq("user_id", user_id).eq("project_name", project_name).execute()
+def delete_project(name):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM projects WHERE project_name = ?", (name,))
+    conn.commit()
+    conn.close()
 
 # ========================
-# 5️⃣ Project Sidebar
+# Session State
+# ========================
+if "project_name" not in st.session_state:
+    st.session_state.project_name = "New Project"
+if "data" not in st.session_state:
+    st.session_state.data = {}
+
+# ========================
+# Sidebar
 # ========================
 st.sidebar.markdown("## 🏢 Project Management")
 projects = load_all_projects()
-selected_project = st.sidebar.selectbox("Select Project", options=["New Project"] + projects)
+selected = st.sidebar.selectbox("Select Project", ["New Project"] + projects)
 
-if selected_project == "New Project":
-    new_project_name = st.sidebar.text_input("New Project Name", value="My Startup")
-    if st.sidebar.button("Create New Project"):
-        st.session_state.project_name = new_project_name
+if selected == "New Project":
+    new_name = st.sidebar.text_input("Project Name", value="My Startup")
+    if st.sidebar.button("Create Project"):
+        st.session_state.project_name = new_name
         st.session_state.data = {}
         st.experimental_rerun()
 else:
-    st.session_state.project_name = selected_project
+    st.session_state.project_name = selected
     if st.sidebar.button("Load Project"):
-        st.session_state.data = load_project(selected_project) or {}
-        st.success(f"Loaded: {selected_project}")
+        st.session_state.data = load_project(selected) or {}
+        st.success(f"Loaded {selected}")
         st.experimental_rerun()
 
-if st.sidebar.button("🗑️ Delete Project"):
+if st.sidebar.button("Delete Project"):
     delete_project(st.session_state.project_name)
     st.session_state.data = {}
-    st.success("Deleted!")
+    st.success("Project deleted!")
     st.experimental_rerun()
 
 # ========================
-# 6️⃣ Default Financial Data
+# Default Financial Data
 # ========================
-data = st.session_state.get("data", {})
+data = st.session_state.data
 if not data:
     data = {
         "material_cost": 10.0,
@@ -134,7 +124,7 @@ if not data:
     }
 
 # ========================
-# 7️⃣ Input Form
+# Input Form
 # ========================
 with st.expander("📊 Input Financial Data", expanded=True):
     col1, col2 = st.columns(2)
@@ -145,69 +135,67 @@ with st.expander("📊 Input Financial Data", expanded=True):
     with col2:
         data["fixed_costs"] = st.number_input("Monthly Fixed Costs ($)", value=data["fixed_costs"])
         data["profit_margin"] = st.number_input("Target Profit Margin (%)", value=data["profit_margin"]*100)/100
-        data["expected_sales"] = st.number_input("Expected Monthly Sales (units)", value=data["expected_sales"])
+        data["expected_sales"] = st.number_input("Expected Monthly Sales", value=data["expected_sales"])
 
 # ========================
-# 8️⃣ Auto-Save
+# Auto Save
 # ========================
 save_project(st.session_state.project_name, data)
 
 # ========================
-# 9️⃣ Metrics Calculation
+# Metrics
 # ========================
-def calculate_metrics(data):
-    total_variable_cost = data["material_cost"] + data["packaging_cost"] + data["shipping_cost"]
-    selling_price = total_variable_cost * (1 + data["profit_margin"])
-    contribution_margin = selling_price - total_variable_cost
-    contribution_margin_pct = (contribution_margin / selling_price) * 100 if selling_price else 0
-    break_even_units = data["fixed_costs"] / contribution_margin if contribution_margin > 0 else float("inf")
-    monthly_profit = (contribution_margin * data["expected_sales"]) - data["fixed_costs"]
-    roi = (monthly_profit / data["fixed_costs"])*100 if data["fixed_costs"] else 0
+def calculate_metrics(d):
+    total_var = d["material_cost"] + d["packaging_cost"] + d["shipping_cost"]
+    selling_price = total_var * (1 + d["profit_margin"])
+    contribution = selling_price - total_var
+    contribution_pct = (contribution / selling_price * 100) if selling_price else 0
+    break_even = d["fixed_costs"] / contribution if contribution else float("inf")
+    profit = contribution * d["expected_sales"] - d["fixed_costs"]
+    roi = (profit / d["fixed_costs"]*100) if d["fixed_costs"] else 0
     return {
-        "total_variable_cost": total_variable_cost,
+        "total_variable_cost": total_var,
         "selling_price": selling_price,
-        "contribution_margin": contribution_margin,
-        "contribution_margin_pct": contribution_margin_pct,
-        "break_even_units": break_even_units,
-        "monthly_profit": monthly_profit,
+        "contribution_margin": contribution,
+        "contribution_margin_pct": contribution_pct,
+        "break_even_units": break_even,
+        "monthly_profit": profit,
         "roi": roi
     }
 
 metrics = calculate_metrics(data)
 
 # ========================
-# 10️⃣ KPI Dashboard
+# KPI Dashboard
 # ========================
 st.markdown("### 📈 Financial KPIs")
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Selling Price", f"${metrics['selling_price']:.2f}")
-col2.metric("Contribution Margin", f"${metrics['contribution_margin']:.2f}", f"{metrics['contribution_margin_pct']:.1f}%")
-col3.metric("Break-even Units", f"{metrics['break_even_units']:.0f}")
-col4.metric("Monthly Profit", f"${metrics['monthly_profit']:.0f}")
+c1,c2,c3,c4 = st.columns(4)
+c1.metric("Selling Price",$f"{metrics['selling_price']:.2f}")
+c2.metric("Contribution Margin",$f"{metrics['contribution_margin']:.2f}",f"{metrics['contribution_margin_pct']:.1f}%")
+c3.metric("Break-even Units",f"{metrics['break_even_units']:.0f}")
+c4.metric("Monthly Profit",f"${metrics['monthly_profit']:.0f}")
 
 # ========================
-# 11️⃣ Charts
+# Charts
 # ========================
-# Profit vs Price
 prices = np.linspace(metrics["total_variable_cost"]*0.8, metrics["total_variable_cost"]*2, 100)
 profits = (prices - metrics["total_variable_cost"])*data["expected_sales"] - data["fixed_costs"]
-fig = px.line(x=prices, y=profits, labels={"x":"Selling Price ($)","y":"Monthly Profit ($)"}, title="Profit vs Price")
-fig.add_hline(y=0, line_dash="dash", line_color="red")
-st.plotly_chart(fig, use_container_width=True)
+fig = px.line(x=prices, y=profits, labels={"x":"Selling Price","y":"Monthly Profit"}, title="Profit vs Price")
+fig.add_hline(y=0,line_dash="dash",line_color="red")
+st.plotly_chart(fig,use_container_width=True)
 
-# Break-even
-x_units = np.arange(0, data["expected_sales"]*1.5, 50)
-revenue = x_units * metrics["selling_price"]
-total_cost = x_units * metrics["total_variable_cost"] + data["fixed_costs"]
+x_units = np.arange(0,data["expected_sales"]*1.5,50)
+revenue = x_units*metrics["selling_price"]
+total_cost = x_units*metrics["total_variable_cost"] + data["fixed_costs"]
 profit = revenue - total_cost
 fig2 = make_subplots(specs=[[{"secondary_y": True}]])
-fig2.add_trace(go.Scatter(x=x_units, y=revenue, name="Revenue"), secondary_y=False)
-fig2.add_trace(go.Scatter(x=x_units, y=total_cost, name="Total Cost"), secondary_y=False)
-fig2.add_trace(go.Scatter(x=x_units, y=profit, name="Profit"), secondary_y=True)
-st.plotly_chart(fig2, use_container_width=True)
+fig2.add_trace(go.Scatter(x=x_units,y=revenue,name="Revenue"),secondary_y=False)
+fig2.add_trace(go.Scatter(x=x_units,y=total_cost,name="Total Cost"),secondary_y=False)
+fig2.add_trace(go.Scatter(x=x_units,y=profit,name="Profit"),secondary_y=True)
+st.plotly_chart(fig2,use_container_width=True)
 
 # ========================
-# 12️⃣ Scenario Modeling
+# Scenario Modeling
 # ========================
 scenarios = {
     "Conservative":{"sales":data["expected_sales"]*0.7,"margin":data["profit_margin"]*0.9},
@@ -215,7 +203,7 @@ scenarios = {
     "Aggressive":{"sales":data["expected_sales"]*1.3,"margin":data["profit_margin"]*1.1}
 }
 scenario_data = []
-for name, params in scenarios.items():
+for name,params in scenarios.items():
     temp = data.copy()
     temp["expected_sales"] = params["sales"]
     temp["profit_margin"] = params["margin"]
@@ -228,10 +216,3 @@ for name, params in scenarios.items():
         "Margin": f"{m['contribution_margin_pct']:.1f}%"
     })
 st.dataframe(pd.DataFrame(scenario_data))
-
-# ========================
-# 13️⃣ Export CSV
-# ========================
-export_data = {**data, **metrics}
-csv = pd.DataFrame([export_data]).to_csv(index=False)
-st.download_button("📤 Export CSV", csv, f"{st.session_state.project_name}_financials.csv")
