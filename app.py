@@ -55,9 +55,15 @@ def save_project(user_id, project_name, data):
     cursor = conn.cursor()
     cursor.execute("SELECT id FROM projects WHERE user_id=? AND project_name=?", (user_id, project_name))
     if cursor.fetchone():
-        cursor.execute("UPDATE projects SET data=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND project_name=?", (data_json, user_id, project_name))
+        cursor.execute(
+            "UPDATE projects SET data=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND project_name=?",
+            (data_json, user_id, project_name)
+        )
     else:
-        cursor.execute("INSERT INTO projects (user_id, project_name, data) VALUES (?, ?, ?)", (user_id, project_name, data_json))
+        cursor.execute(
+            "INSERT INTO projects (user_id, project_name, data) VALUES (?, ?, ?)",
+            (user_id, project_name, data_json)
+        )
     conn.commit()
     conn.close()
 
@@ -112,25 +118,32 @@ st.sidebar.markdown("## 🏢 Project Management")
 projects = load_all_projects(user_id)
 selected = st.sidebar.selectbox("Select Project", ["New Project"] + projects)
 
+# Create Project
 if selected == "New Project":
     new_name = st.sidebar.text_input("Project Name", value="My Startup")
     if st.sidebar.button("Create Project"):
         st.session_state.project_name = new_name
         st.session_state.data = {}
         save_project(user_id, new_name, st.session_state.data)
-        st.experimental_rerun()
+        st.success(f"Project '{new_name}' created! ✅")
+        st.experimental_set_query_params(project=new_name)
+        st.stop()  # توقف مؤقت لتجنب rerun error
+
 else:
     st.session_state.project_name = selected
     if st.sidebar.button("Load Project"):
         st.session_state.data = load_project(user_id, selected) or {}
         st.success(f"Loaded {selected}")
-        st.experimental_rerun()
+        st.experimental_set_query_params(project=selected)
+        st.stop()
 
+# Delete Project
 if st.sidebar.button("Delete Project"):
     delete_project(user_id, st.session_state.project_name)
     st.session_state.data = {}
     st.success("Project deleted!")
-    st.experimental_rerun()
+    st.experimental_set_query_params(project="New Project")
+    st.stop()
 
 # ----------------------
 # Default Financial Data
@@ -161,7 +174,7 @@ with st.expander("📊 Input Financial Data", expanded=True):
         data["expected_sales"] = st.number_input("Expected Monthly Sales", value=data["expected_sales"])
 
 # ----------------------
-# Auto-save for multi-user
+# Auto-save
 # ----------------------
 save_project(user_id, st.session_state.project_name, data)
 
