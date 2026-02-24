@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.express as px
 from datetime import datetime, timedelta
+import io
 
 # ==================== CONFIG ====================
 st.set_page_config(
@@ -25,127 +25,188 @@ h2, h3 {color: #e2e8f0 !important;}
 </style>
 """, unsafe_allow_html=True)
 
-# ==================== DATA ====================
-@st.cache_data(ttl=300)
-def load_data():
-    dates = pd.date_range(start='2025-12-01', periods=30, freq='D')
-    return {
-        'sales': pd.DataFrame({
-            'date': dates,
-            'revenue': np.random.randint(8000, 30000, 30).cumsum(),
-            'orders': np.random.randint(25, 120, 30).cumsum(),
-            'customers': np.random.randint(15, 60, 30)
-        }),
-        'products': pd.DataFrame({
-            'name': ['iPhone 16 Pro', 'MacBook Pro M4', 'AirPods Pro 3', 'Apple Watch Ultra 2', 'iPad Pro M4'],
-            'price': [45000, 78000, 12900, 32000, 48000],
-            'stock': [45, 22, 95, 38, 35],
-            'sales': np.random.randint(8, 35, 5)
-        })
-    }
-
-if 'data' not in st.session_state:
-    st.session_state.data = load_data()
-
-# ==================== HEADER ====================
+# ==================== MAIN APP ====================
 st.markdown("# 📊 **BusinessPro Dashboard**")
-st.markdown("### *Real-time analytics for smart decisions*")
+st.markdown("### *تحليل بياناتك الخاصة - ارفع ملفك الآن!*")
 
-# ==================== METRICS ====================
-data = st.session_state.data
-sales = data['sales']
-products = data['products']
-
-col1, col2, col3, col4 = st.columns(4)
+# ==================== UPLOAD & INPUT SECTION ====================
+col1, col2 = st.columns([2, 1])
 
 with col1:
-    st.markdown("""
-    <div class='metric-card'>
-        <h3>Total Revenue</h3>
-        <h1>EGP {:.0f}</h1>
-        <p>+{:.1f}% MoM</p>
-    </div>
-    """.format(sales['revenue'].iloc[-1]/1000, 25.3), unsafe_allow_html=True)
+    st.markdown("### 📁 **ارفع ملف Excel/CSV الخاص بك**")
+    uploaded_file = st.file_uploader(
+        "اختر ملف البيانات (Excel أو CSV)", 
+        type=['csv', 'xlsx'],
+        help="الملف يجب يحتوي على: التاريخ | المبيعات | عدد الطلبات | العملاء"
+    )
 
 with col2:
+    st.markdown("### ⌨️ **أو أدخل البيانات يدوياً**")
+    manual_data = st.text_area(
+        "أدخل بياناتك هنا (تاريخ,المبيعات,الطلبات,العملاء):",
+        placeholder="2025-01-01,50000,25,15\n2025-01-02,62000,32,18",
+        height=100
+    )
+
+# ==================== DATA PROCESSING ====================
+@st.cache_data
+def process_uploaded_file(uploaded_file):
+    if uploaded_file is not None:
+        try:
+            if uploaded_file.name.endswith('.csv'):
+                df = pd.read_csv(uploaded_file)
+            else:
+                df = pd.read_excel(uploaded_file)
+            
+            # تنظيف الأسماء
+            df.columns = df.columns.str.strip().str.lower()
+            
+            # تحديد الأعمدة المهمة
+            date_col = next((col for col in ['date', 'تاريخ', 'التاريخ'] if col in df.columns), None)
+            revenue_col = next((col for col in ['revenue', 'مبيعات', 'المبيعات', 'sales'] if col in df.columns), None)
+            orders_col = next((col for col in ['orders', 'طلبات', 'الطلبات'] if col in df.columns), None)
+            customers_col = next((col for col in ['customers', 'عملاء', 'العملاء'] if col in df.columns), None)
+            
+            if date_col and revenue_col:
+                df['date'] = pd.to_datetime(df[date_col])
+                df['revenue'] = pd.to_numeric(df[revenue_col], errors='coerce')
+                if orders_col:
+                    df['orders'] = pd.to_numeric(df[orders_col], errors='coerce')
+                if customers_col:
+                    df['customers'] = pd.to_numeric(df[customers_col], errors='coerce')
+                
+                return df[['date', 'revenue', 'orders', 'customers']].dropna()
+        except:
+            st.error("❌ مشكلة في قراءة الملف")
+    return None
+
+@st.cache_data
+def process_manual_data(text_data):
+    if text_data.strip():
+        try:
+            lines = text_data.strip().split('\n')
+            data = []
+            for line in lines:
+                parts = line.split(',')
+                if len(parts) >= 2:
+                    data.append({
+                        'date': pd.to_datetime(parts[0].strip()),
+                        'revenue': float(parts[1].strip()),
+                        'orders': float(parts[2].strip()) if len(parts) > 2 else 0,
+                        'customers': float(parts[3].strip()) if len(parts) > 3 else 0
+                    })
+            return pd.DataFrame(data)
+        except:
+            st.error("❌ تنسيق البيانات غير صحيح")
+    return None
+
+# معالجة البيانات
+df = None
+if uploaded_file is not None:
+    df = process_uploaded_file(uploaded_file)
+elif manual_data.strip():
+    df = process_manual_data(manual_data)
+
+# ==================== DISPLAY DATA ====================
+if df is not None and len(df) > 0:
+    st.success(f"✅ تم تحليل **{len(df)}** سجل بنجاح!")
+    
+    # عرض عينة من البيانات
+    st.markdown("### 📋 **عينة من بياناتك**")
+    st.dataframe(df.head(), use_container_width=True)
+    
+    # ==================== METRICS ====================
+    col1, col2, col3, col4 = st.columns(4)
+    
+    total_revenue = df['revenue'].sum()
+    total_orders = df['orders'].sum() if 'orders' in df else 0
+    total_customers = df['customers'].sum() if 'customers' in df else 0
+    avg_revenue = df['revenue'].mean()
+    
+    with col1:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <h3>💰 إجمالي المبيعات</h3>
+            <h1>EGP {total_revenue:,.0f}</h1>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <h3>📦 إجمالي الطلبات</h3>
+            <h1>{total_orders:,.0f}</h1>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <h3>👥 إجمالي العملاء</h3>
+            <h1>{total_customers:,.0f}</h1>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col4:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <h3>📊 متوسط المبيعات اليومي</h3>
+            <h1>EGP {avg_revenue:,.0f}</h1>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # ==================== CHARTS ====================
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### 💹 **تطور المبيعات**")
+        fig1 = px.line(df.sort_values('date'), x='date', y='revenue',
+                      title="المبيعات عبر الزمن")
+        fig1.update_layout(font=dict(color="#e2e8f0"))
+        st.plotly_chart(fig1, use_container_width=True)
+    
+    with col2:
+        if 'orders' in df.columns:
+            st.markdown("### 📦 **عدد الطلبات**")
+            fig2 = px.bar(df.tail(30).sort_values('date'), x='date', y='orders')
+            fig2.update_layout(font=dict(color="#e2e8f0"))
+            st.plotly_chart(fig2, use_container_width=True)
+    
+    # ==================== TREND ANALYSIS ====================
+    if len(df) > 1:
+        st.markdown("### 📈 **تحليل الاتجاهات**")
+        
+        recent = df.tail(7)  # آخر 7 أيام
+        growth = ((recent['revenue'].iloc[-1] - recent['revenue'].iloc[0]) / recent['revenue'].iloc[0]) * 100
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("نمو المبيعات الأسبوعي", f"{growth:.1f}%")
+        with col2:
+            st.metric("أعلى يوم مبيعات", f"EGP {df['revenue'].max():,.0f}")
+        with col3:
+            st.metric("متوسط يومي", f"EGP {df['revenue'].mean():,.0f}")
+
+else:
+    st.info("📤 **ارفع ملف Excel/CSV أو أدخل بياناتك يدوياً في المربع المجاور**")
+    
     st.markdown("""
-    <div class='metric-card'>
-        <h3>Total Orders</h3>
-        <h1>{:,}</h1>
-        <p>+18.2% growth</p>
-    </div>
-    """.format(sales['orders'].iloc[-1]), unsafe_allow_html=True)
-
-with col3:
-    st.markdown("""
-    <div class='metric-card'>
-        <h3>Customers</h3>
-        <h1>{:,}</h1>
-        <p>+14.7% new</p>
-    </div>
-    """.format(sales['customers'].sum()), unsafe_allow_html=True)
-
-with col4:
-    st.markdown("""
-    <div class='metric-card'>
-        <h3>Conversion</h3>
-        <h1>4.8%</h1>
-        <p>Target: 6%</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-# ==================== CHARTS ====================
-col1, col2 = st.columns(2)
-
-with col1:
-    st.markdown("### 💰 **Revenue Trend**")
-    fig1 = px.line(sales.tail(14), x='date', y='revenue', 
-                   color_discrete_sequence=['#6366f1'],
-                   title="Last 2 Weeks")
-    fig1.update_layout(showlegend=False, font=dict(color="#e2e8f0"))
-    st.plotly_chart(fig1, use_container_width=True)
-
-with col2:
-    st.markdown("### 📦 **Daily Orders**")
-    fig2 = px.bar(sales.tail(7), x='date', y='orders',
-                  color_discrete_sequence=['#3b82f6'])
-    fig2.update_layout(showlegend=False, font=dict(color="#e2e8f0"))
-    st.plotly_chart(fig2, use_container_width=True)
-
-# ==================== PRODUCTS ====================
-st.markdown("### 📱 **Top Products**")
-col1, col2 = st.columns([3,1])
-
-with col1:
-    products_display = products.copy()
-    products_display['revenue'] = products_display['price'] * products_display['sales']
-    products_display = products_display.sort_values('revenue', ascending=False)
-    st.dataframe(products_display.round(0), use_container_width=True)
-
-with col2:
-    st.markdown("""
-    <div style='background: linear-gradient(145deg, #10b981, #059669); 
-                color: white; padding: 2rem; border-radius: 15px; text-align: center;'>
-        <h3>🚀 Quick Actions</h3>
-        <p>➕ Add Product</p>
-        <p>📊 Full Report</p>
-        <p>👥 Customers</p>
-    </div>
-    """, unsafe_allow_html=True)
+    ### 📋 **تنسيق البيانات المطلوب:**
+    ```
+    التاريخ,المبيعات,الطلبات,العملاء
+    2025-01-01,50000,25,15
+    2025-01-02,62000,32,18
+    2025-01-03,45000,22,12
+    ```
+    **أو ارفع ملف Excel/CSV يحتوي على نفس الأعمدة**
+    """)
 
 # ==================== SIDEBAR ====================
 with st.sidebar:
-    st.markdown("## ⚙️ **Controls**")
+    st.markdown("## ⚙️ **إعدادات التحليل**")
     
-    if st.button("🔄 **Refresh Data**"):
-        st.session_state.data = load_data()
-        st.success("✅ Data refreshed!")
-        st.rerun()
+    st.markdown("### 📊 **نوع الرسم البياني**")
+    chart_type = st.selectbox("اختر الرسم:", ["خطي", "عمودي"])
     
-    st.markdown("---")
-    st.markdown("### 📅 **Date Filter**")
-    date_range = st.date_input("Select period", 
-                              value=(datetime.now()-timedelta(days=30), datetime.now()))
-    
-    st.markdown("### 🏷️ **Category**")
-    category = st.selectbox("Filter by", ["All Products", "Electronics", "Clothing"])
+    st.markdown("### ⏱️ **فترة التحليل**")
+    period = st.selectbox("الفترة:", ["كل البيانات", "آخر 30 يوم", "آخر 7 أيام"])
