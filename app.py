@@ -9,6 +9,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+# Page setup
 st.set_page_config(
     page_title="AI-Powered Startup Financial System",
     page_icon="💰",
@@ -170,10 +171,10 @@ metrics = calculate_metrics(data)
 # ========================
 st.markdown("### 📈 Financial KPIs")
 c1,c2,c3,c4 = st.columns(4)
-c1.metric("Selling Price",$f"{metrics['selling_price']:.2f}")
-c2.metric("Contribution Margin",$f"{metrics['contribution_margin']:.2f}",f"{metrics['contribution_margin_pct']:.1f}%")
-c3.metric("Break-even Units",f"{metrics['break_even_units']:.0f}")
-c4.metric("Monthly Profit",f"${metrics['monthly_profit']:.0f}")
+c1.metric("Selling Price", f"${metrics['selling_price']:.2f}")
+c2.metric("Contribution Margin", f"${metrics['contribution_margin']:.2f}", f"{metrics['contribution_margin_pct']:.1f}%")
+c3.metric("Break-even Units", f"{metrics['break_even_units']:.0f}")
+c4.metric("Monthly Profit", f"${metrics['monthly_profit']:.0f}")
 
 # ========================
 # Charts
