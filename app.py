@@ -73,14 +73,14 @@ LANGUAGES = {
         'email': 'Email', 'password': 'Password', 'egp': 'EGP', 'name': 'Full Name',
         'phone': 'Phone (01XXXXXXXX)', 'address': 'Address', 'search_store': 'Search Store...',
         'add_product': 'Add Product', 'products': 'Products', 'orders': 'Orders',
-        'dashboard': 'Dashboard'
+        'dashboard': 'Dashboard', 'store_name': 'Store Name'
     },
     'ar': {
         'title': 'سوق الفخامة 🇪🇬', 'register': 'تسجيل', 'login': 'دخول',
         'email': 'الإيميل', 'password': 'كلمة المرور', 'egp': 'جنيه', 'name': 'الاسم',
         'phone': 'الهاتف', 'address': 'العنوان', 'search_store': 'ابحث عن متجر...',
         'add_product': 'إضافة منتج', 'products': 'المنتجات', 'orders': 'الطلبات',
-        'dashboard': 'لوحة التحكم'
+        'dashboard': 'لوحة التحكم', 'store_name': 'اسم المتجر'
     }
 }
 
@@ -90,13 +90,6 @@ def get_text(key):
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
-def is_strong_password(password):
-    return (len(password) >= 8 and 
-            any(c.isupper() for c in password) and
-            any(c.islower() for c in password) and
-            any(c.isdigit() for c in password) and
-            any(c in '!@#$%^&*()?' for c in password))
-
 def is_valid_phone(phone):
     return bool(re.match(r"^01\d{9}$", phone))
 
@@ -104,14 +97,14 @@ def is_valid_phone(phone):
 with st.sidebar:
     st.selectbox("🌐 Language", ["English 🇺🇸", "العربية 🇸🇦"], 
                 index=0 if st.session_state.language == 'en' else 1,
-                key="lang_select", on_change=lambda: setattr(st.session_state, 'language', 
-                'en' if st.session_state.lang_select == "English 🇺🇸" else 'ar') or st.rerun())
+                key="lang_select", on_change=lambda: globals().update({'language': 'en' if st.session_state.lang_select == "English 🇺🇸" else 'ar'}))
     
     if st.session_state.current_user:
         st.info(f"👤 {st.session_state.current_user.get('store_name', 'User')}")
         if st.button("🚪 Logout"):
             for key in ['current_user', 'current_store', 'cart', 'show_user_type', 'temp_user']:
-                del st.session_state[key]
+                if key in st.session_state:
+                    del st.session_state[key]
             st.rerun()
 
 # Main App
@@ -139,20 +132,20 @@ def auth_page():
             
             if st.form_submit_button(get_text('register')):
                 if email and password:
-                    if is_strong_password(password):
-                        if email not in st.session_state.data['users']:
-                            st.session_state.data['users'][email] = {
-                                'password': hash_password(password), 'type': None,
-                                'name': '', 'store_name': ''
-                            }
-                            st.session_state.show_user_type = True
-                            st.session_state.temp_user = email
-                            st.success("✅ Account created! Choose your type.")
-                            st.rerun()
-                        else:
-                            st.error("❌ Email exists!")
+                    # ✅ شيلنا التحقق من قوة كلمة المرور
+                    if email not in st.session_state.data['users']:
+                        st.session_state.data['users'][email] = {
+                            'password': hash_password(password), 
+                            'type': None,
+                            'name': '', 
+                            'store_name': ''
+                        }
+                        st.session_state.show_user_type = True
+                        st.session_state.temp_user = email
+                        st.success("✅ Account created! Choose your type.")
+                        st.rerun()
                     else:
-                        st.error("❌ Weak password!")
+                        st.error("❌ Email exists!")
                 else:
                     st.error("❌ Fill all fields!")
         
@@ -201,50 +194,90 @@ def auth_page():
 
 def owner_dashboard():
     if not st.session_state.current_user.get('store_name'):
-        st.session_state.current_user['store_name'] = st.text_input("Store Name")
-        if st.button("Save Store"):
-            st.session_state.data['stores'][st.session_state.current_user['store_name']] = {
-                'products': [], 'orders': []
+        st.markdown("### 🏪 Enter Your Store Name")
+        store_name = st.text_input(get_text('store_name'))
+        if st.button("✅ Save Store", use_container_width=True):
+            st.session_state.current_user['store_name'] = store_name
+            st.session_state.data['stores'][store_name] = {
+                'owner': st.session_state.current_user.get('email', 'unknown'),
+                'products': [], 
+                'orders': [],
+                'inventory': {}
             }
+            st.success(f"✅ Store '{store_name}' created!")
             st.rerun()
         return
     
     store_name = st.session_state.current_user['store_name']
     store = st.session_state.data['stores'].get(store_name, {'products': [], 'orders': []})
     
-    tab1, tab2 = st.tabs(["➕ Add Product", "📦 Products"])
+    tab1, tab2, tab3 = st.tabs([get_text('add_product'), get_text('products'), get_text('orders')])
     
     with tab1:
         with st.form("product_form"):
             col1, col2 = st.columns(2)
-            with col1: name = st.text_input("Product Name")
-            with col2: price = st.number_input("Price EGP", min_value=0.0)
-            qty = st.number_input("Quantity", min_value=1)
+            with col1:
+                name = st.text_input("Product Name")
+                price = st.number_input("Price EGP", min_value=0.0, format="%.2f")
+            with col2:
+                qty = st.number_input("Quantity", min_value=1)
+                desc = st.text_area("Description", height=100)
             
-            if st.form_submit_button("Add"):
-                store['products'].append({'name': name, 'price': price, 'qty': qty})
-                st.success("✅ Added!")
+            if st.form_submit_button("➕ Add Product", use_container_width=True):
+                store['products'].append({
+                    'name': name, 
+                    'price': price, 
+                    'qty': qty,
+                    'desc': desc,
+                    'stock': qty
+                })
+                st.success("✅ Product added!")
                 st.rerun()
     
     with tab2:
         if store['products']:
             st.dataframe(pd.DataFrame(store['products']))
+        else:
+            st.info("📦 No products yet!")
+    
+    with tab3:
+        if store['orders']:
+            st.dataframe(pd.DataFrame(store['orders']))
+        else:
+            st.info("📬 No orders yet!")
 
 def buyer_dashboard():
-    search = st.text_input("🔍 Search Stores")
-    stores = list(st.session_state.data['stores'].keys())
+    st.markdown("### 🔍 " + get_text('search_store'))
+    search = st.text_input(get_text('search_store'))
     
-    for store in stores:
-        if st.button(f"🏪 {store}"):
-            st.session_state.current_store = store
+    stores = list(st.session_state.data['stores'].keys())
+    if search:
+        stores = [s for s in stores if search.lower() in s.lower()]
+    
+    for store_name in stores:
+        if st.button(f"🏪 {store_name}", key=f"enter_{store_name}"):
+            st.session_state.current_store = store_name
             st.rerun()
     
     if st.session_state.current_store:
         store = st.session_state.data['stores'][st.session_state.current_store]
-        for product in store['products']:
-            if st.button(f"🛒 {product['name']} - {product['price']} EGP"):
-                st.session_state.cart.setdefault(st.session_state.current_store, {})[product['name']] = 1
-                st.success("Added to cart!")
+        st.markdown(f"# 🏪 {st.session_state.current_store}")
+        
+        cols = st.columns(3)
+        for i, product in enumerate(store['products']):
+            with cols[i % 3]:
+                st.markdown(f"""
+                    <div class="card">
+                        <h3>{product['name']}</h3>
+                        <p>{product['desc'][:60]}...</p>
+                        <p><strong>{product['price']:,} {get_text('egp')}</strong></p>
+                    </div>
+                """, unsafe_allow_html=True)
+                if st.button(f"🛒 Add to Cart", key=f"add_{product['name']}"):
+                    if 'cart' not in st.session_state:
+                        st.session_state.cart = {}
+                    st.session_state.cart.setdefault(st.session_state.current_store, {})[product['name']] = st.session_state.cart.get(st.session_state.current_store, {}).get(product['name'], 0) + 1
+                    st.success("✅ Added to cart!")
 
 if __name__ == "__main__":
     main()
